@@ -2,6 +2,13 @@
 
 import os
 import json
+import shutil
+import subprocess
+import sys
+import threading
+from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 from cli_anything.minimax.utils.minimax_backend import (
@@ -11,6 +18,216 @@ from cli_anything.minimax.utils.minimax_backend import (
 )
 
 API_KEY = os.environ.get("MINIMAX_API_KEY")
+HARNESS_ROOT = Path(__file__).resolve().parents[3]
+
+
+def _resolve_cli(name):
+    """Resolve installed CLI command; fall back to python -m for local dev."""
+    force = os.environ.get("CLI_ANYTHING_FORCE_INSTALLED", "").strip() == "1"
+    path = shutil.which(name)
+    if path:
+        print(f"[_resolve_cli] Using installed command: {path}")
+        return [path]
+    if force:
+        raise RuntimeError(f"{name} not found in PATH. Install with: pip install -e .")
+    module = name.replace("cli-anything-", "cli_anything.")
+    module = f"{module}.{name.split('-')[-1]}_cli"
+    print(f"[_resolve_cli] Falling back to: {sys.executable} -m {module}")
+    return [sys.executable, "-m", module]
+
+
+def _subprocess_env(tmp_path, extra=None):
+    env = os.environ.copy()
+    env.pop("MINIMAX_API_KEY", None)
+    env["HOME"] = str(tmp_path)
+    pythonpath_parts = [str(HARNESS_ROOT)]
+    if env.get("PYTHONPATH"):
+        pythonpath_parts.append(env["PYTHONPATH"])
+    env["PYTHONPATH"] = os.pathsep.join(pythonpath_parts)
+    if extra:
+        env.update(extra)
+    return env
+
+
+@contextmanager
+def _fake_minimax_server(status_code=200):
+    """Run a local MiniMax-compatible HTTP fake for CLI subprocess tests."""
+
+    class Handler(BaseHTTPRequestHandler):
+        requests_seen = []
+
+        def do_POST(self):
+            length = int(self.headers.get("Content-Length", "0"))
+            body = self.rfile.read(length).decode("utf-8")
+            payload = json.loads(body) if body else {}
+            self.requests_seen.append(
+                {
+                    "path": self.path,
+                    "authorization": self.headers.get("Authorization", ""),
+                    "payload": payload,
+                }
+            )
+
+            if status_code != 200:
+                response = b'{"error":"Invalid API key"}'
+                self.send_response(status_code)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(response)))
+                self.end_headers()
+                self.wfile.write(response)
+                return
+
+            if self.path.endswith("/chat/completions"):
+                response = json.dumps(
+                    {
+                        "choices": [
+                            {"message": {"role": "assistant", "content": "mock chat ok"}}
+                        ],
+                        "usage": {
+                            "prompt_tokens": 3,
+                            "completion_tokens": 2,
+                            "total_tokens": 5,
+                        },
+                    }
+                ).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(response)))
+                self.end_headers()
+                self.wfile.write(response)
+                return
+
+            if self.path.endswith("/v1/t2a_v2"):
+                hex_audio = bytes([0xFF, 0xFB, 0x11, 0x22]).hex()
+                event = json.dumps(
+                    {
+                        "data": {"audio": hex_audio, "status": 2},
+                        "base_resp": {"status_code": 0, "status_msg": "success"},
+                    }
+                )
+                response = f"data:{event}\n\ndata:[DONE]\n\n".encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Content-Length", str(len(response)))
+                self.end_headers()
+                self.wfile.write(response)
+                return
+
+            self.send_response(404)
+            self.end_headers()
+
+        def log_message(self, format, *args):
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}", Handler.requests_seen
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+class TestCLISubprocessSmoke:
+    CLI_BASE = _resolve_cli("cli-anything-minimax")
+
+    def _run(self, args, tmp_path, extra_env=None, check=True):
+        return subprocess.run(
+            self.CLI_BASE + args,
+            capture_output=True,
+            text=True,
+            check=check,
+            env=_subprocess_env(tmp_path, extra_env),
+        )
+
+    def test_installed_command_help_smoke(self, tmp_path):
+        result = self._run(["--help"], tmp_path)
+        assert result.returncode == 0
+        assert "MiniMax CLI" in result.stdout
+        assert "chat" in result.stdout
+        assert "tts" in result.stdout
+
+    def test_no_backend_commands_work_without_api_key(self, tmp_path):
+        session_status = self._run(["--json", "session", "status"], tmp_path)
+        status = json.loads(session_status.stdout)
+        assert status["message_count"] == 0
+        assert status["history_count"] == 0
+
+        models = self._run(["models"], tmp_path)
+        assert "MiniMax-M2.7" in models.stdout
+
+        voices = self._run(["voices"], tmp_path)
+        assert "English_Graceful_Lady" in voices.stdout
+
+    def test_missing_api_key_fails_before_network_call(self, tmp_path):
+        result = self._run(
+            ["--json", "chat", "--prompt", "hello"],
+            tmp_path,
+            check=False,
+        )
+        assert result.returncode == 1
+        payload = json.loads(result.stdout)
+        assert payload["type"] == "RuntimeError"
+        assert "MiniMax API key not found" in payload["error"]
+        assert "MINIMAX_API_KEY" in payload["error"]
+
+    def test_invalid_minimax_api_key_reports_api_error(self, tmp_path):
+        with _fake_minimax_server(status_code=401) as (base_url, requests_seen):
+            result = self._run(
+                ["--json", "chat", "--prompt", "hello"],
+                tmp_path,
+                extra_env={
+                    "MINIMAX_API_KEY": "invalid-key",
+                    "MINIMAX_BASE_URL": base_url,
+                },
+                check=False,
+            )
+
+        assert result.returncode == 1
+        payload = json.loads(result.stdout)
+        assert payload["type"] == "RuntimeError"
+        assert "MiniMax API error" in payload["error"]
+        assert requests_seen[0]["authorization"] == "Bearer invalid-key"
+
+    def test_api_mocked_chat_and_tts_workflow(self, tmp_path):
+        with _fake_minimax_server() as (base_url, requests_seen):
+            chat = self._run(
+                ["--json", "chat", "--prompt", "Say ok"],
+                tmp_path,
+                extra_env={
+                    "MINIMAX_API_KEY": "sk-test",
+                    "MINIMAX_BASE_URL": base_url,
+                },
+            )
+            chat_payload = json.loads(chat.stdout)
+            assert chat_payload["content"] == "mock chat ok"
+            assert chat_payload["usage"]["total_tokens"] == 5
+
+            audio_path = tmp_path / "mock.mp3"
+            tts = self._run(
+                [
+                    "--json",
+                    "tts",
+                    "--text",
+                    "Hello from the fake API",
+                    "--output",
+                    str(audio_path),
+                ],
+                tmp_path,
+                extra_env={
+                    "MINIMAX_API_KEY": "sk-test",
+                    "MINIMAX_BASE_URL": base_url,
+                },
+            )
+            tts_payload = json.loads(tts.stdout)
+
+        assert tts_payload["output_file"] == str(audio_path)
+        assert tts_payload["size_bytes"] == 4
+        assert audio_path.read_bytes() == bytes([0xFF, 0xFB, 0x11, 0x22])
+        assert any(req["path"].endswith("/chat/completions") for req in requests_seen)
+        assert any(req["path"].endswith("/v1/t2a_v2") for req in requests_seen)
 
 
 # ── Chat ───────────────────────────────────────────────────────────────────────

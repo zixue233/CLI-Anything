@@ -249,6 +249,7 @@ def stream(ctx, prompt, model_opt=None, temperature=None, max_tokens=None):
 @click.option(
     "--output",
     "-o",
+    "output_path",
     type=click.Path(),
     default="output.mp3",
     show_default=True,
@@ -256,7 +257,7 @@ def stream(ctx, prompt, model_opt=None, temperature=None, max_tokens=None):
 )
 @click.pass_context
 @handle_error
-def tts(ctx, text, model_opt, voice, output):
+def tts(ctx, text, model_opt, voice, output_path):
     """Synthesize text to speech using MiniMax TTS."""
     parent_key = ctx.obj.get("api_key") if ctx.obj else None
     api_key = get_api_key(parent_key)
@@ -266,16 +267,16 @@ def tts(ctx, text, model_opt, voice, output):
         text=text,
         model=model_opt,
         voice=voice,
-        output_path=output,
+        output_path=output_path,
     )
 
     output_data = {
-        "output_file": output,
+        "output_file": output_path,
         "size_bytes": len(audio_data),
         "model": model_opt,
         "voice": voice,
     }
-    output(output_data, f"✓ Audio saved to {output} ({len(audio_data)} bytes)")
+    output(output_data, f"✓ Audio saved to {output_path} ({len(audio_data)} bytes)")
 
 
 @cli.group()
