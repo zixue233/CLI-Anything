@@ -8,7 +8,7 @@ The suite has two files:
 
 Real-backend classes are skipped automatically when `joplin` is not on `PATH`.
 
-## test_core.py (65 tests)
+## test_core.py (79 tests, 1 skipped on Windows)
 
 Pure Python tests covering the harness surface. Safe to run anywhere without
 a Joplin backend.
@@ -18,9 +18,11 @@ Coverage areas:
 - Project schema, save/open roundtrip, unicode roundtrip, history shape
 - Session lifecycle: set/get, snapshot, undo, redo, undo→redo chain,
   redo cleared on new snapshot, save/save-without-path, `mark_dirty`
+- Session save regression: nested project path auto-creates missing parent
+  directories before lock/write
 - Backend runner: `find_joplin`, profile/no-profile invocation, error path,
-  benign Node punycode warning passthrough, timeout, JSON parse fallback,
-  empty stdout
+  benign Node warning stripping, mixed warning+real-error handling, timeout,
+  JSON parse fallback, empty stdout
 - Core module argument shapes for: notes (cp/mv/ren/remove/get verbose),
   notebooks (rmbook flags), todos (mktodo/toggle/clear/done/undone), tags
   (tagnotes via `tag list`)
@@ -37,6 +39,18 @@ Coverage areas:
 - Joplin source parity checks for `ls --format json`, `config --export`,
   `config --import-file`, `sync --upgrade/--use-lock`, `import --force`,
   `import --output-format`, `version`, `server`, and `e2ee` wrapper arguments
+- Backend config precedence regression checks: CLI `--binary/--profile`
+  overrides, project-persisted values when flags are omitted, and fallback to
+  default `joplin`
+- `backend version` fallback resolves the Joplin `package.json` across every
+  common npm/pnpm layout: Windows shim + custom prefix
+  (`<prefix>/joplin.cmd` + `<prefix>/node_modules/joplin`), Unix npm global
+  symlink (`<prefix>/bin/joplin -> <prefix>/lib/node_modules/joplin/main.js`,
+  skipped where symlinks need elevated privileges), Unix non-symlink wrapper
+  (`<prefix>/bin/joplin` + `<prefix>/lib/node_modules/joplin`), `npm root -g`
+  last-resort lookup, foreign `package.json` rejection (must have
+  `"name": "joplin"`), and reraise-when-nothing-found / unrelated-error
+  passthrough
 
 ```bash
 python -m pytest -q cli_anything/joplin/tests/test_core.py
@@ -60,7 +74,7 @@ behavior:
 - `--dry-run` does not mutate the project file
 - unknown subcommand exits non-zero
 
-### `TestBackendCommands` (5 tests, backend required)
+### `TestBackendCommands` (6 tests, backend required)
 
 Isolated real-backend command tests:
 
@@ -68,6 +82,7 @@ Isolated real-backend command tests:
 - `notebooks list` and `notes list`
 - `config get sync.target` and `config list`
 - `status show`
+- backend utilities (`backend version/dump`, `server status`, `e2ee status`)
 - `session undo` / `session redo` return the documented errors on a clean
   project
 
@@ -126,7 +141,11 @@ CLI_ANYTHING_FORCE_INSTALLED=1 python -m pytest -v -s cli_anything/joplin/tests/
   message, and the workflow test accepts that shape.
 - `joplin version` is broken in some npm global layouts because
   `command-version.js` requires `../package.json`. The harness falls back to
-  `node_modules/joplin/package.json` and includes the original error in stderr.
+  the package metadata in any of: the symlink-resolved binary directory
+  (Unix npm global / Homebrew / nvm), the sibling `node_modules/joplin`
+  (Windows shim / custom prefix), the parent's `lib/node_modules/joplin`
+  (non-symlinked `<prefix>/bin/joplin`), or whatever `npm root -g` reports.
+  The original error is included in `stderr`.
 - Non-ASCII process arguments on Windows pass through `joplin.cmd` →
   `cmd.exe`, which drops to the active code page. The unicode workflow test
   is therefore skipped on Windows. The Python-level unicode handling in the

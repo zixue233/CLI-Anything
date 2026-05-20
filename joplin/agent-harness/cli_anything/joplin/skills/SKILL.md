@@ -75,7 +75,10 @@ When `--json` is enabled, commands return:
 - Some Joplin CLI builds gate `search` behind GUI mode; if you see
   `"only available in GUI mode"`, treat search as best-effort.
 - Joplin 3.6.x can have a broken `version` command in npm global layouts; the
-  harness falls back to the installed package metadata for `backend version`.
+  harness falls back to installed package metadata for `backend version`,
+  probing the symlink-resolved binary directory, the Windows-style sibling
+  `node_modules/joplin`, the Unix-style parent `lib/node_modules/joplin`, and
+  finally `npm root -g`.
 
 ## Test workflow
 
@@ -95,3 +98,8 @@ python -m pytest -v --tb=no cli_anything/joplin/tests
 # Verify the installed console script entry point
 CLI_ANYTHING_FORCE_INSTALLED=1 python -m pytest -v -s cli_anything/joplin/tests/test_full_e2e.py
 ```
+
+Current validation baseline (Windows + Joplin CLI 3.6.2):
+
+- `python -m pytest -q cli_anything/joplin/tests/test_core.py` → `79 passed, 1 skipped`
+- `python -m pytest -q cli_anything/joplin/tests` → `106 passed, 2 skipped`

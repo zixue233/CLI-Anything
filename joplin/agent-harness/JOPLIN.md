@@ -123,6 +123,11 @@ python -m pytest -v --tb=no cli_anything/joplin/tests
 
 For real backend runs, ensure `joplin` is installed and available in `PATH`.
 
+Current validation baseline (Windows + Joplin CLI 3.6.2):
+
+- `python -m pytest -q cli_anything/joplin/tests/test_core.py` → `79 passed, 1 skipped`
+- `python -m pytest -q cli_anything/joplin/tests` → `106 passed, 2 skipped`
+
 ## Development notes
 
 - Prefer adding new coverage as a small command test first.

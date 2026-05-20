@@ -6,7 +6,7 @@ has implemented and verified. It is intended as the single source of truth for
 
 ## 1. Categories
 
-The harness covers 11 workflow categories:
+The harness covers 12 workflow categories:
 
 1. CLI surface — `--help`, every group's help, JSON envelope
 2. Project lifecycle — `new`, `open`, `info`, `json`, `save`, `status`,
@@ -77,13 +77,13 @@ tag.add, tag.remove, attach.add, interop.export, note.remove, notebook.remove
 
 ## 4. Test layering summary
 
-| Layer                    | File / class                         | Backend needed | Workflows |
-|--------------------------|--------------------------------------|----------------|-----------|
-| Unit + CLI contract      | `test_core.py`                       | No             | 65 tests  |
-| CLI subprocess           | `TestCLISubprocess`                  | No             | 10 tests  |
-| Real-backend commands    | `TestBackendCommands`                | Yes            | 6 tests   |
-| Real-backend workflows   | `TestBackendWorkflows`               | Yes            | 11 tests  |
-| End-to-end integration   | `TestBackendIntegration`             | Yes            | 1 test    |
+| Layer                    | File / class                         | Backend needed | Workflows                       |
+|--------------------------|--------------------------------------|----------------|---------------------------------|
+| Unit + CLI contract      | `test_core.py`                       | No             | 79 tests (1 skipped on Windows) |
+| CLI subprocess           | `TestCLISubprocess`                  | No             | 10 tests                        |
+| Real-backend commands    | `TestBackendCommands`                | Yes            | 6 tests                         |
+| Real-backend workflows   | `TestBackendWorkflows`               | Yes            | 11 tests (1 skipped on Windows) |
+| End-to-end integration   | `TestBackendIntegration`             | Yes            | 1 test                          |
 
 ## 5. Adding a new workflow
 
@@ -110,4 +110,7 @@ tag.add, tag.remove, attach.add, interop.export, note.remove, notebook.remove
   is therefore skipped on Windows.
 - `joplin version` can fail in npm global layouts because the upstream command
   looks for `../package.json`. `backend version` falls back to the installed
-  `node_modules/joplin/package.json` metadata.
+  Joplin `package.json` across every common layout: the symlink-resolved
+  binary directory (Unix npm global, Homebrew, nvm), the Windows-style
+  sibling `node_modules/joplin`, the Unix-style parent `lib/node_modules/joplin`,
+  and `npm root -g` as a last resort.

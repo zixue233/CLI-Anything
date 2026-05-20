@@ -880,6 +880,13 @@ Each application received complete, production-ready CLI interfaces — not demo
 <td align="center">✅ <a href="zotero/agent-harness/">New</a></td>
 </tr>
 <tr>
+<td align="center"><strong>📓 <a href="joplin/agent-harness/">Joplin</a></strong></td>
+<td>Note-taking &amp; To-dos</td>
+<td><code>cli-anything-joplin</code></td>
+<td>Joplin terminal CLI subprocess</td>
+<td align="center">✅ <a href="joplin/agent-harness/">New</a></td>
+</tr>
+<tr>
 <td align="center"><strong>📝 <a href="mubu/agent-harness/">Mubu</a></strong></td>
 <td>Knowledge Management &amp; Outlining</td>
 <td><code>cli-anything-mubu</code></td>
@@ -1183,6 +1190,7 @@ cli-anything/
 ├── 📄 libreoffice/agent-harness/        # LibreOffice CLI (158 tests)
 ├── 📧 mailchimp/agent-harness/          # Mailchimp Marketing API CLI (303 commands, 36 unit tests)
 ├── 📚 zotero/agent-harness/             # Zotero CLI (new, write import support)
+├── 📓 joplin/agent-harness/             # Joplin CLI (106 tests, new)
 ├── 📝 mubu/agent-harness/               # Mubu CLI (96 tests)
 ├── 📹 obs-studio/agent-harness/         # OBS Studio CLI (153 tests)
 ├── 📱 nslogger/agent-harness/           # NSLogger CLI (139 tests)

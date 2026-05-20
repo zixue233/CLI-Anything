@@ -618,6 +618,159 @@ def test_sync_import_config_and_backend_args(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# backend version fallback for broken npm-global `joplin version`
+# ---------------------------------------------------------------------------
+
+
+def _write_joplin_package_json(path, version="3.6.2", description="Joplin CLI"):
+    import json as _json
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        _json.dumps(
+            {"name": "joplin", "version": version, "description": description}
+        ),
+        encoding="utf-8",
+    )
+
+
+def _force_version_failure(monkeypatch, message="Cannot find module '../package.json'"):
+    def boom(args, cfg, timeout=120):
+        assert args == ["version"]
+        raise RuntimeError(message)
+
+    monkeypatch.setattr(backend_core, "run_joplin_command", boom)
+
+
+def test_backend_version_fallback_windows_shim_layout(tmp_path, monkeypatch):
+    """Custom Windows prefix: `<prefix>/joplin.cmd` + sibling `node_modules`."""
+    prefix = tmp_path / "joplin-cli"
+    binary = prefix / "joplin.cmd"
+    binary.parent.mkdir(parents=True, exist_ok=True)
+    binary.write_text("@echo off", encoding="utf-8")
+    _write_joplin_package_json(prefix / "node_modules" / "joplin" / "package.json")
+
+    monkeypatch.setattr(backend_core, "find_joplin", lambda _b: str(binary))
+    monkeypatch.setattr(backend_core, "_npm_global_root", lambda: None)
+    _force_version_failure(monkeypatch)
+
+    result = backend_core.version_info(joplin_backend.BackendConfig())
+    assert result["returncode"] == 0
+    assert result["stdout"] == "3.6.2"
+    assert result["metadata"]["name"] == "joplin"
+    assert "Fallback after broken Joplin version command" in result["stderr"]
+
+
+def test_backend_version_fallback_unix_global_symlink(tmp_path, monkeypatch):
+    """Unix npm default: `<prefix>/bin/joplin` symlink into `<prefix>/lib/node_modules/joplin/main.js`."""
+    if not hasattr(os, "symlink"):
+        pytest.skip("symlinks not supported on this platform")
+
+    prefix = tmp_path / "usr-local"
+    bin_dir = prefix / "bin"
+    pkg_dir = prefix / "lib" / "node_modules" / "joplin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    pkg_dir.mkdir(parents=True, exist_ok=True)
+
+    main_js = pkg_dir / "main.js"
+    main_js.write_text("// joplin entry", encoding="utf-8")
+    _write_joplin_package_json(pkg_dir / "package.json", version="3.5.1")
+
+    binary = bin_dir / "joplin"
+    try:
+        os.symlink(main_js, binary)
+    except (OSError, NotImplementedError):
+        pytest.skip("could not create symlink (permission denied?)")
+
+    monkeypatch.setattr(backend_core, "find_joplin", lambda _b: str(binary))
+    monkeypatch.setattr(backend_core, "_npm_global_root", lambda: None)
+    _force_version_failure(monkeypatch)
+
+    result = backend_core.version_info(joplin_backend.BackendConfig())
+    assert result["stdout"] == "3.5.1"
+    assert result["metadata"]["name"] == "joplin"
+
+
+def test_backend_version_fallback_unix_global_no_symlink(tmp_path, monkeypatch):
+    """`<prefix>/bin/joplin` is a plain wrapper script (no symlink), package
+    still lives at `<prefix>/lib/node_modules/joplin`."""
+    prefix = tmp_path / "opt-node"
+    bin_dir = prefix / "bin"
+    pkg_dir = prefix / "lib" / "node_modules" / "joplin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    pkg_dir.mkdir(parents=True, exist_ok=True)
+    _write_joplin_package_json(pkg_dir / "package.json", version="3.4.0")
+
+    binary = bin_dir / "joplin"
+    binary.write_text("#!/bin/sh\nexec node ../lib/node_modules/joplin/main.js \"$@\"\n", encoding="utf-8")
+
+    monkeypatch.setattr(backend_core, "find_joplin", lambda _b: str(binary))
+    monkeypatch.setattr(backend_core, "_npm_global_root", lambda: None)
+    _force_version_failure(monkeypatch)
+
+    result = backend_core.version_info(joplin_backend.BackendConfig())
+    assert result["stdout"] == "3.4.0"
+
+
+def test_backend_version_fallback_uses_npm_root_when_local_paths_miss(tmp_path, monkeypatch):
+    """If none of the path-derived candidates exist, fall back to `npm root -g`."""
+    binary = tmp_path / "stray-bin" / "joplin"
+    binary.parent.mkdir(parents=True, exist_ok=True)
+    binary.write_text("noop", encoding="utf-8")
+
+    npm_root = tmp_path / "npm-global"
+    _write_joplin_package_json(npm_root / "joplin" / "package.json", version="3.7.99")
+
+    monkeypatch.setattr(backend_core, "find_joplin", lambda _b: str(binary))
+    monkeypatch.setattr(backend_core, "_npm_global_root", lambda: npm_root)
+    _force_version_failure(monkeypatch)
+
+    result = backend_core.version_info(joplin_backend.BackendConfig())
+    assert result["stdout"] == "3.7.99"
+
+
+def test_backend_version_fallback_ignores_foreign_package_json(tmp_path, monkeypatch):
+    """A non-Joplin `package.json` next to the binary must not impersonate metadata."""
+    prefix = tmp_path / "shared-prefix"
+    binary = prefix / "joplin.cmd"
+    binary.parent.mkdir(parents=True, exist_ok=True)
+    binary.write_text("@echo off", encoding="utf-8")
+
+    foreign = prefix / "node_modules" / "joplin" / "package.json"
+    foreign.parent.mkdir(parents=True, exist_ok=True)
+    foreign.write_text('{"name": "something-else", "version": "0.0.1"}', encoding="utf-8")
+
+    monkeypatch.setattr(backend_core, "find_joplin", lambda _b: str(binary))
+    monkeypatch.setattr(backend_core, "_npm_global_root", lambda: None)
+    _force_version_failure(monkeypatch)
+
+    with pytest.raises(RuntimeError, match="package.json"):
+        backend_core.version_info(joplin_backend.BackendConfig())
+
+
+def test_backend_version_fallback_reraises_when_nothing_found(tmp_path, monkeypatch):
+    binary = tmp_path / "nowhere" / "joplin"
+    binary.parent.mkdir(parents=True, exist_ok=True)
+    binary.write_text("noop", encoding="utf-8")
+
+    monkeypatch.setattr(backend_core, "find_joplin", lambda _b: str(binary))
+    monkeypatch.setattr(backend_core, "_npm_global_root", lambda: None)
+    _force_version_failure(monkeypatch, message="Cannot find module '../package.json'")
+
+    with pytest.raises(RuntimeError, match="package.json"):
+        backend_core.version_info(joplin_backend.BackendConfig())
+
+
+def test_backend_version_does_not_fallback_on_unrelated_error(tmp_path, monkeypatch):
+    binary = tmp_path / "joplin.cmd"
+    binary.write_text("@echo off", encoding="utf-8")
+    monkeypatch.setattr(backend_core, "find_joplin", lambda _b: str(binary))
+    _force_version_failure(monkeypatch, message="permission denied")
+
+    with pytest.raises(RuntimeError, match="permission denied"):
+        backend_core.version_info(joplin_backend.BackendConfig())
+
+
+# ---------------------------------------------------------------------------
 # Backend config resolution precedence
 # ---------------------------------------------------------------------------
 

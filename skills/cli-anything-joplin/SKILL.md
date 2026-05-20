@@ -76,7 +76,10 @@ When `--json` is enabled, commands return:
   `error.message` in the JSON envelope to decide whether to retry inside the
   REPL.
 - Joplin 3.6.x can have a broken `version` command in npm global layouts; the
-  harness falls back to installed package metadata for `backend version`.
+  harness falls back to installed package metadata for `backend version`,
+  probing the symlink-resolved binary directory, the Windows-style sibling
+  `node_modules/joplin`, the Unix-style parent `lib/node_modules/joplin`, and
+  finally `npm root -g`.
 
 ## Recommended workflow
 
@@ -87,3 +90,8 @@ When `--json` is enabled, commands return:
 3. Run mutating commands with `--json --project ./my-task.joplin-harness.json`.
 4. Use `session history` for a structured audit of what the agent did.
 5. Export with `interop export <path> --format jex` for portable backups.
+
+Current validation baseline (Windows + Joplin CLI 3.6.2):
+
+- `python -m pytest -q cli_anything/joplin/tests/test_core.py` → `79 passed, 1 skipped`
+- `python -m pytest -q cli_anything/joplin/tests` → `106 passed, 2 skipped`
