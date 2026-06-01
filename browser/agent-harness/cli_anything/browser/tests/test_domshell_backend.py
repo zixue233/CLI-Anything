@@ -1027,8 +1027,15 @@ def test_extract_lane_id_returns_none_when_content_missing():
 
 
 @patch.object(backend, "_call_execute", new_callable=AsyncMock)
-def test_first_call_omits_group_id_and_captures_lane(mock_call):
-    """A session with no stored lane: first call has no group_id, captures the returned lane."""
+def test_first_call_passes_wrapper_signature_and_captures_lane(mock_call):
+    """A session with no stored lane: the wrapper passes (command,
+    use_daemon, session=sess) into ``_call_execute``; the wire-format
+    ``group_id`` selection (``"new"`` for non-daemon first calls,
+    ``"shared"`` for daemon-mode-no-session) happens inside
+    ``_call_execute`` itself and is covered by the dedicated
+    wire-payload tests below. This test only asserts the wrapper-level
+    call signature plus the ``_capture_lane`` parser hookup.
+    """
     sess = Session()  # domshell_lane_id starts as None
     mock_call.return_value = _make_result("✓\n[lane: 12345]")
 

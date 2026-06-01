@@ -507,14 +507,25 @@ async def _call_execute(
     #     fresh isolated lane and returns its id in the [lane: ...]
     #     marker, which `_capture_lane` stores on the session for next
     #     time.
-    #   • daemon-mode first call without a Session → group_id="shared"
-    #     — the daemon's persistent connection has its own default lane
-    #     that stays sticky across calls, so direct (sessionless) daemon
-    #     workflows like `open_url(use_daemon=True)` followed by
-    #     `ls(use_daemon=True)` share browser state naturally. Using
-    #     "new" here would mint a fresh isolated lane per call and lose
-    #     the page just opened (Codex P2 regression caught on the
-    #     initial 2.0.2 migration commit be62f843b5).
+    #   • daemon-mode first call without a Session → group_id="shared".
+    #     When the persistent daemon connection is live, the default
+    #     per-connection lane stays sticky across calls — so direct
+    #     (sessionless) daemon workflows like `open_url(use_daemon=True)`
+    #     followed by `ls(use_daemon=True)` share browser state without
+    #     needing a Session to carry a lane id.
+    #
+    #     In the fall-back path (daemon dead / not started — i.e.
+    #     `_daemon_session is None` below), each call spawns its own
+    #     ClientSession, which triggers its own SESSION_START on
+    #     DOMShell and gets its own per-connection default lane.
+    #     "shared" is per-MCP-session, so it still routes correctly
+    #     there — to *that spawn's* default lane — giving per-call
+    #     isolation. Same outcome as omitting `group_id` would have
+    #     pre-2.0.2, minus the [DEPRECATION] warning, and crucially one
+    #     orphan tab-group per spawn instead of two (`group_id="new"`
+    #     would create an explicit second lane on top of the
+    #     SESSION_START default — the orphan flood reverted in commit
+    #     99d1182504).
     if session is not None and getattr(session, "domshell_lane_id", None):
         arguments["group_id"] = session.domshell_lane_id
     elif use_daemon:
