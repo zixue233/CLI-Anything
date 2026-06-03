@@ -19,7 +19,10 @@ setup(
     long_description=readme.read_text(encoding="utf-8") if readme.exists() else "",
     long_description_content_type="text/markdown",
     url="https://github.com/HKUDS/CLI-Anything",
-    packages=find_namespace_packages(include=["cli_anything.*"]),
+    packages=find_namespace_packages(
+        include=["cli_anything.*"],
+        exclude=["cli_anything.*.tests", "cli_anything.*.tests.*"],
+    ),
     classifiers=[
         "Development Status :: 4 - Beta",
         "Intended Audience :: Developers",

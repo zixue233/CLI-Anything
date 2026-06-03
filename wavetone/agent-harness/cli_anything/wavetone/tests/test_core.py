@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import subprocess
 import struct
 import wave
 from pathlib import Path
@@ -9,6 +10,7 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
+from cli_anything.wavetone.core import audio as audio_core
 from cli_anything.wavetone.core.audio import probe_audio
 from cli_anything.wavetone.core.project import (
     DEFAULT_ANALYSIS_SETTINGS,
@@ -109,6 +111,47 @@ def test_probe_malformed_wav_falls_back_to_stat(tmp_path: Path) -> None:
     assert info["size_bytes"] == 0
 
 
+def test_ffprobe_uses_single_show_entries_argument(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    audio = tmp_path / "tone.mp3"
+    audio.write_bytes(b"mp3")
+    captured: dict[str, list[str]] = {}
+
+    monkeypatch.setattr(audio_core.shutil, "which", lambda name: "ffprobe")
+
+    def fake_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        captured["args"] = args
+        stdout = json.dumps(
+            {
+                "streams": [
+                    {
+                        "codec_type": "audio",
+                        "codec_name": "mp3",
+                        "sample_rate": "44100",
+                        "channels": 2,
+                    }
+                ],
+                "format": {
+                    "duration": "1.25",
+                    "format_name": "mp3",
+                    "bit_rate": "128000",
+                    "size": "3",
+                },
+            }
+        )
+        return subprocess.CompletedProcess(args, 0, stdout=stdout)
+
+    monkeypatch.setattr(audio_core.subprocess, "run", fake_run)
+
+    info = audio_core._probe_ffprobe(audio)
+    entries = captured["args"][captured["args"].index("-show_entries") + 1]
+
+    assert captured["args"].count("-show_entries") == 1
+    assert "stream=codec_type,codec_name,sample_rate,channels" in entries
+    assert ":format=duration,format_name,bit_rate,size" in entries
+    assert info["probe_method"] == "ffprobe"
+    assert info["sample_rate"] == 44100
+
+
 def test_session_event_log(tmp_path: Path) -> None:
     session_path = tmp_path / "session.json"
     append_event(session_path, "created", {"project": "demo"})
@@ -116,6 +159,19 @@ def test_session_event_log(tmp_path: Path) -> None:
 
     events = load_events(session_path)
     assert [event["event"] for event in events] == ["created", "launched"]
+
+
+def test_session_rejects_invalid_schema(tmp_path: Path) -> None:
+    session_path = tmp_path / "session.json"
+    session_path.write_text("[]", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="JSON object"):
+        append_event(session_path, "created", {})
+
+    session_path.write_text(json.dumps({"events": {}}), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="events.*list"):
+        load_events(session_path)
 
 
 def test_find_wavetone_from_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
